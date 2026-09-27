@@ -2,74 +2,73 @@
 
 ## Introduction
 
-This is a small tool for [Audible](https://audible.com) users to easily extract their bookmarks from the audio books as text. By default, it uses the state-of-the-art speech-to-text AI model called [Whisper by OpenAI](https://openai.com/index/whisper).
+This is a small tool for [Audible](https://audible.com) users to extract the clips and bookmarks they saved in their audiobooks as text. Speech-to-text runs locally on your Mac with [mlx-whisper](https://pypi.org/project/mlx-whisper/), so no OpenAI account is needed.
 
 > [!IMPORTANT]
-> This tool is only meant to help users download and use the Audible books they **actually own**.
+> This tool is only meant to help users use the Audible books they **actually own**.
 
 ## Limitations
-- It only supports English books for now.
-- It has only been tested on MacOS. Linux will probably work, but Windows is unlikely.
+- Requires a Mac with Apple Silicon (mlx-whisper runs on the GPU via MLX).
+- Transcription is set up for English books.
 
 ## User guide
-Follow these steps to get started.
 
-### Clone this repo.
+### Install
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then from the repository root:
+```
+uv sync
+```
+No ffmpeg, jq or audible-cli installation is needed: audio is decrypted and decoded with [PyAV](https://pyav.basswood.io/), which bundles its own FFmpeg.
 
+### Log in to your Audible account
+```
+uv run audible-bookmarks login
+```
+You will be asked for your Audible marketplace (or pass `--country us`). The tool prints an Amazon sign-in URL: open it in your browser, sign in (including any 2FA or captcha), and when you land on a "page not found" page, copy the full URL from the address bar and paste it back into the terminal. The tool never sees your password.
 
-### Install the necessary dependencies.
-1. `ffmpeg` (if you need to install `brew`, follow the instructions [here](https://brew.sh/))
-```
-brew install ffmpeg
-```  
-2. `jq`
-```
-brew install jq
-```  
-3. The rest are Python dependencies that can be installed by running the following command. Consider using an environment management tool such as [Conda](https://docs.conda.io/en/latest/).
-```
-pip install -r requirements.txt
-```
- 
+This registers a new Audible device and stores its credentials in `data/audible_configs/audible.json`. Use `--encrypt` to protect that file with a password. To sign out and deregister the device, run `uv run audible-bookmarks logout`.
 
-### Log in to your Audible account and provide an OpenAI API key
-Run:
+### List your books
 ```
-python main.py login
+uv run audible-bookmarks list
 ```
-The command will ask for a few information:
-- Your Audible user name (for some users, this is your Amazon user name)
-- Your Audible password. This will only be used for authenticating to your Audible account.
-- The counry/region of your Audible account.
-- Your OpenAI API key. If you don't have one, follow [the steps here](https://platform.openai.com/docs/quickstart).
+Prints the ASIN, title and author of each book in your library.
 
-### Get a list of your Audible books
-Run:
+### Transcribe a book's clips and bookmarks
 ```
-python main.py list
+uv run audible-bookmarks transcribe <ASIN>
 ```
-If everything works as expected, you should see a list of Audible books (ASIN + title) printed.
+What happens:
+1. The book is downloaded as Audible delivers it (encrypted `.aaxc`) together with its license voucher, into `data/audio/<ASIN>/`. Existing downloads are reused.
+2. Your clips and bookmarks are fetched from Audible. Clips have a start and end; plain bookmarks only a position, so the 30 seconds after it are used (change with `--bookmark-window SECONDS`).
+3. Only the bookmarked ranges are decrypted and decoded, in memory. No DRM-free copy of the book is written to disk.
+4. Each range is transcribed locally with Whisper. The default model is `mlx-community/whisper-large-v3-turbo` (about 1.6 GB, downloaded on first use); pick another with `--model`, e.g. `--model mlx-community/whisper-small-mlx`.
 
-### Extract bookmarks and transcribe
-Run:
+Other options:
+- `--save-clips` also writes each clip as an mp3 to `data/audio/<ASIN>/clips/`. These are for your personal use only; do not distribute them.
+- `--force` re-transcribes clips that were already transcribed. By default, re-running only transcribes new clips and bookmarks.
+
+### Output
+The notes are saved to `data/audio/<ASIN>/transcribed_notes.json`, sorted by position:
+```json
+[
+    {
+        "id": "a5UD2AXN0N0DW",
+        "kind": "clip",
+        "start_ms": 26530133,
+        "end_ms": 26560133,
+        "timestamp": "07:22:10.133",
+        "chapter": "Chapter 13",
+        "note": "",
+        "text": "end of the semester, but doubted if he could. ..."
+    }
+]
 ```
-python main.py transcribe_bookmarks <ASIN>
+
+## Development
 ```
-where `<ASIN>` is the book ID you want to use.
-
-### Wait for the code to run
-It will take a while. Basically the code performs the following steps:
-1. Download the original audio book file, remove the DRM using your Audible user credential, and save it as a `.mp4` file.
-> [!IMPORTANT]
-> Anti-Piracy Notice
-> 
-> Please only use these tools for gaining full access to your own ebooks for archiving/conversion/convenience. De-drmed ebooks should not be uploaded to open servers, torrents, or other methods of mass distribution. No help will be given to people doing such things. Authors, retailers and publishers all need to make a living, so that they can continue to produce books for us to read. Don’t be a parasite.
-> 
-> The converted `.mp4` file is only meant for your personal use. DO NOT distribute! After the code finish running, you should delete this file to avoid leaks.
-
-2. Extract the bookmarks you created for this book, specifically, the start and end time of each clip.
-3. Extract each clip as separate audio files.
-4. Call the Whisper API to transcribe the audio clips.
-
-### Completed.
-The transcribed notes will be saved in this file: `data/audio/<ASIN>/transcribed_notes.json`.
+uv run pytest                 # tests
+uv run ruff check .           # lint
+uv run ruff format .          # format
+uv run pyrefly check          # type check
+```
